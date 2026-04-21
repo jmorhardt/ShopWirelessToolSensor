@@ -2,33 +2,54 @@ bool isOn = false;
 float smoothed = 0.0;
 unsigned long pendingSince = 0;
 
+const int sensorPin = A0;
+const int thresholdPotPin = A1;
+
+// Signal smoothing
+const float alpha = 0.40;
+
+// Timing
+const unsigned long confirmOnMs = 120;
+const unsigned long confirmOffMs = 250;
+
+// Threshold range in volts for the useful sensor window
+const float thresholdMinV = 0.006;
+const float thresholdMaxV = 0.025;
+
+// Hysteresis in volts
+const float hysteresisV = 0.0015;
+
+// Sampling
+const int samples = 60;
+const int sampleDelayMs = 1;
+const int loopDelayMs = 25;
+
 void setup() {
   Serial.begin(115200);
 }
 
 void loop() {
-  long sum = 0;
-  const int samples = 60;   // was 150
+  long sumSensor = 0;
 
   for (int i = 0; i < samples; i++) {
-    sum += analogRead(A0);
-    delay(1);
+    sumSensor += analogRead(sensorPin);
+    delay(sampleDelayMs);
   }
 
-  float avgCounts = (float)sum / samples;
-  float volts = avgCounts * (5.0 / 1023.0);
+  float avgSensorCounts = (float)sumSensor / samples;
+  float sensorVolts = avgSensorCounts * (5.0 / 1023.0);
 
-  const float alpha = 0.40; // was 0.30
-  smoothed = (alpha * volts) + ((1.0 - alpha) * smoothed);
+  smoothed = (alpha * sensorVolts) + ((1.0 - alpha) * smoothed);
 
-  const float onThreshold = 0.0155;
-  const float offThreshold = 0.0115;
-  const unsigned long confirmMs = 150; // was 300
+  int potRaw = analogRead(thresholdPotPin);
+  float thresholdVolts =
+      thresholdMinV + ((thresholdMaxV - thresholdMinV) * potRaw / 1023.0);
 
   if (!isOn) {
-    if (smoothed >= onThreshold) {
-      if (pendingSince == 0) pendingSince = millis();
-      else if (millis() - pendingSince >= confirmMs) {
+    if (smoothed >= thresholdVolts) {
+      if (pendingSince == 0) {
+        pendingSince = millis();
+      } else if (millis() - pendingSince >= confirmOnMs) {
         isOn = true;
         pendingSince = 0;
       }
@@ -36,9 +57,10 @@ void loop() {
       pendingSince = 0;
     }
   } else {
-    if (smoothed <= offThreshold) {
-      if (pendingSince == 0) pendingSince = millis();
-      else if (millis() - pendingSince >= confirmMs) {
+    if (smoothed <= (thresholdVolts - hysteresisV)) {
+      if (pendingSince == 0) {
+        pendingSince = millis();
+      } else if (millis() - pendingSince >= confirmOffMs) {
         isOn = false;
         pendingSince = 0;
       }
@@ -47,13 +69,15 @@ void loop() {
     }
   }
 
-  Serial.print(avgCounts, 1);
-  Serial.print(",");
-  Serial.print(volts, 4);
-  Serial.print(",");
+  // Plotter-friendly output:
+  // raw sensor volts, smoothed volts, threshold volts, on/off marker
+  // Serial.print(sensorVolts, 4);
+  // Serial.print(",");
   Serial.print(smoothed, 4);
   Serial.print(",");
-  Serial.println(isOn ? 1 : 0);
+  Serial.print(thresholdVolts, 4);
+  Serial.print(",");
+  Serial.println(isOn ? 0.022 : 0.007, 4);
 
-  delay(10);
+  delay(loopDelayMs);
 }
