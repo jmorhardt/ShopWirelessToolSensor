@@ -1,23 +1,25 @@
 bool isOn = false;
+
 float smoothed = 0.0;
-unsigned long pendingSince = 0;
+float baseline = 0.0;
+float energy = 0.0;
 
 const int sensorPin = A0;
-const int thresholdPotPin = A1;
+
+// Fixed bias from your actual circuit behavior
+const float biasVolts = 2.42;
 
 // Signal smoothing
-const float alpha = 0.40;
+const float alphaSignal = 0.20;
 
-// Timing
-const unsigned long confirmOnMs = 120;
-const unsigned long confirmOffMs = 250;
+// Baseline tracking speed while OFF
+const float alphaBase = 0.0015;
 
-// Threshold range in volts for the useful sensor window
-const float thresholdMinV = 0.006;
-const float thresholdMaxV = 0.025;
+const float energyGain = 0.75;
+const float energyDecay = 0.75;
 
-// Hysteresis in volts
-const float hysteresisV = 0.0015;
+const float onEnergyThreshold = 0.020;
+const float offEnergyThreshold = 0.010;
 
 // Sampling
 const int samples = 60;
@@ -39,45 +41,47 @@ void loop() {
   float avgSensorCounts = (float)sumSensor / samples;
   float sensorVolts = avgSensorCounts * (5.0 / 1023.0);
 
-  smoothed = (alpha * sensorVolts) + ((1.0 - alpha) * smoothed);
+  // Remove fixed DC bias
+  float corrected = sensorVolts - biasVolts;
+  if (corrected < 0.0) corrected = 0.0;
 
-  int potRaw = analogRead(thresholdPotPin);
-  float thresholdVolts =
-      thresholdMinV + ((thresholdMaxV - thresholdMinV) * potRaw / 1023.0);
+  // Smooth corrected signal
+  smoothed = (alphaSignal * corrected) + ((1.0 - alphaSignal) * smoothed);
 
+  // Initialize baseline once
+  if (baseline == 0.0) {
+    baseline = smoothed;
+  }
+
+  // Let baseline drift only while OFF
   if (!isOn) {
-    if (smoothed >= thresholdVolts) {
-      if (pendingSince == 0) {
-        pendingSince = millis();
-      } else if (millis() - pendingSince >= confirmOnMs) {
-        isOn = true;
-        pendingSince = 0;
-      }
-    } else {
-      pendingSince = 0;
+    baseline = (alphaBase * smoothed) + ((1.0 - alphaBase) * baseline);
+  }
+
+  float delta = smoothed - baseline;
+  if (delta < 0.0) delta = 0.0;
+
+  // Accumulate activity over time
+  energy = (energy * energyDecay) + (delta * energyGain);
+
+  if (energy < 0.0) energy = 0.0;
+  if (energy > 1.0) energy = 1.0;
+
+  // ON/OFF decision
+  if (!isOn) {
+    if (energy >= onEnergyThreshold) {
+      isOn = true;
     }
   } else {
-    if (smoothed <= (thresholdVolts - hysteresisV)) {
-      if (pendingSince == 0) {
-        pendingSince = millis();
-      } else if (millis() - pendingSince >= confirmOffMs) {
-        isOn = false;
-        pendingSince = 0;
-      }
-    } else {
-      pendingSince = 0;
+    if (energy <= offEnergyThreshold) {
+      isOn = false;
     }
   }
 
   // Plotter-friendly output:
-  // raw sensor volts, smoothed volts, threshold volts, on/off marker
-  // Serial.print(sensorVolts, 4);
-  // Serial.print(",");
-  Serial.print(smoothed, 4);
+  Serial.print(corrected, 4);
   Serial.print(",");
-  Serial.print(thresholdVolts, 4);
-  Serial.print(",");
-  Serial.println(isOn ? 0.022 : 0.007, 4);
+  Serial.println(isOn ? 1.0 : 0.0);
 
   delay(loopDelayMs);
 }
